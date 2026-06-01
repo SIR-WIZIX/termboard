@@ -11,7 +11,8 @@ async fn greet(name: String) -> String {
 
 #[get("/status")]
 async fn status() -> String {
-    format!("OK attempt: {}", increase(m.get_mut().unwrap()))
+    let num: &mut i32 = m.get_mut().unwrap();
+    format!("OK attempt: {}", increase(num))
 }
 
 fn increase(a: &mut i32) -> &i32 {
