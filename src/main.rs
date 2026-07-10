@@ -1,5 +1,6 @@
 use std::ops::Deref;
 use std::sync::Mutex;
+mod logger;
 
 #[macro_use]
 extern crate rocket;
