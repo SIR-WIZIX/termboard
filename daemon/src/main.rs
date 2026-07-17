@@ -1,6 +1,7 @@
 use std::ops::Deref;
 use std::sync::Mutex;
-mod common;
+use chrono;
+use common;
 
 #[macro_use]
 extern crate rocket;
@@ -26,6 +27,19 @@ fn status(state: &rocket::State<Mutex<MyData>>) -> String {
     )
 }
 
+#[get("/event")]
+fn event(event: &rocket::State<Mutex<common::Event>>) -> String {
+    let inner_event = event.lock().unwrap();
+    let time = inner_event.time.to_string();
+    let level = inner_event.level.to_string();
+    let text = inner_event.text.clone();
+    format!("{0} - level:{1} msg:{2}",
+    time,
+    level,
+    text,
+    )
+}
+
 fn increase(a: &MyData) -> (MyData, i32) {
     let md = MyData { data: a.data + 1 };
     let num: i32 = md.data;
@@ -38,9 +52,17 @@ struct MyData {
 
 #[launch]
 fn rocket() -> _ {
-    let data: MyData = MyData { data: 0 };
+    let event: common::Event = common::Event {
+    time: chrono::Local::now(),
+    text: "OK for now".to_string(),
+    level: common::LogLevel::Info,
+    };
+
+    let data: MyData = MyData { data: 0, };
     rocket::build()
         .manage(Mutex::new(data))
+        .manage(Mutex::new(event))
         .mount("/", routes![status])
         .mount("/", routes![greet])
+        .mount("/", routes![event])
 }

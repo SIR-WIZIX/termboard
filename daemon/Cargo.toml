@@ -1,7 +1,9 @@
 [package]
-name = "common"
+name = "daemon"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+rocket = "0.5.1"
+common = { path = "../common"}
 chrono = "0.4.45"

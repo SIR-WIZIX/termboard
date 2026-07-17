@@ -1,6 +1,7 @@
 use std::fmt::Display;
+use chrono;
 
-enum LogLevel {
+pub enum LogLevel {
     Error,
     Warn,
     Info,
@@ -20,10 +21,10 @@ impl Display for LogLevel {
     }
 }
 
-struct Event {
-    time: std::time::Instant,
-    text: String,
-    level: LogLevel,
+pub struct Event {
+    pub time: chrono::DateTime<chrono::Local>,
+    pub text: String,
+    pub level: LogLevel,
 }
 
 impl Display for Event {
