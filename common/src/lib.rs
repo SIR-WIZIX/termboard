@@ -1,7 +1,5 @@
 use std::fmt::Display;
 
-use log;
-
 enum LogLevel {
     Error,
     Warn,
