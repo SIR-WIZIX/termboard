@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["tui", "common", "daemon"]
+members = ["tui", "common", "daemon", "logcollector"]
 
 #[package]
 #name = "termboard"

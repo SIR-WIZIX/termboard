@@ -1,7 +1,8 @@
-use std::ops::Deref;
-use std::sync::Mutex;
 use chrono;
 use common;
+use std::ops::{Deref, DerefMut};
+use std::sync::Mutex;
+mod collector;
 
 #[macro_use]
 extern crate rocket;
@@ -9,6 +10,14 @@ extern crate rocket;
 #[get("/hello/<name>")]
 fn greet(name: String) -> String {
     format!("Hello {name}!")
+}
+
+#[get("/debug/snapshot")]
+fn snapshot(collector: &rocket::State<Mutex<collector::SystemCollector>>) -> String {
+    let mut system_collector = collector.lock().unwrap();
+
+    let snapshot = system_collector.deref_mut().full_snapshot();
+    format!("{snapshot:#?}")
 }
 
 #[get("/status")]
@@ -33,11 +42,7 @@ fn event(event: &rocket::State<Mutex<common::Event>>) -> String {
     let time = inner_event.time.to_string();
     let level = inner_event.level.to_string();
     let text = inner_event.text.clone();
-    format!("{0} - level:{1} msg:{2}",
-    time,
-    level,
-    text,
-    )
+    format!("{0} - level:{1} msg:{2}", time, level, text,)
 }
 
 fn increase(a: &MyData) -> (MyData, i32) {
@@ -53,16 +58,19 @@ struct MyData {
 #[launch]
 fn rocket() -> _ {
     let event: common::Event = common::Event {
-    time: chrono::Local::now(),
-    text: "OK for now".to_string(),
-    level: common::LogLevel::Info,
+        time: chrono::Local::now(),
+        text: "OK for now".to_string(),
+        level: common::LogLevel::Info,
     };
 
-    let data: MyData = MyData { data: 0, };
+    let data: MyData = MyData { data: 0 };
+    let collector = collector::SystemCollector::new();
     rocket::build()
         .manage(Mutex::new(data))
         .manage(Mutex::new(event))
+        .manage(Mutex::new(collector))
         .mount("/", routes![status])
         .mount("/", routes![greet])
         .mount("/", routes![event])
+        .mount("/", routes![snapshot])
 }
