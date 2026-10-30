@@ -20,6 +20,37 @@ fn snapshot(collector: &rocket::State<Mutex<collector::SystemCollector>>) -> Str
     format!("{snapshot:#?}")
 }
 
+#[get("/debug/bench")]
+fn benchmark(collector: &rocket::State<Mutex<collector::SystemCollector>>) -> String {
+    let mut system_collector = collector.lock().unwrap();
+
+    let start_time = std::time::SystemTime::now();
+    let _ = system_collector.deref_mut().full_snapshot();
+    let full_snapshot_time = std::time::SystemTime::elapsed(&start_time);
+    let start_time = std::time::SystemTime::now();
+    let _ = system_collector.deref_mut().refresh_host();
+    let refresh_host_time = std::time::SystemTime::elapsed(&start_time);
+    let start_time = std::time::SystemTime::now();
+    let _ = system_collector.deref_mut().refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::All,
+        true,
+        sysinfo::ProcessRefreshKind::nothing()
+            .without_tasks()
+            .with_cpu()
+            .with_user(sysinfo::UpdateKind::Always)
+            .with_memory()
+            .with_cmd(sysinfo::UpdateKind::Always)
+            .with_exe(sysinfo::UpdateKind::Always),
+    );
+    let refresh_processes_time = std::time::SystemTime::elapsed(&start_time);
+    format!(
+        "full snapshot time - {0}\nrefresh host time - {1}\nrefresh processes time - {2}",
+        full_snapshot_time.unwrap_or_default().as_nanos(),
+        refresh_host_time.unwrap_or_default().as_nanos(),
+        refresh_processes_time.unwrap_or_default().as_nanos(),
+    )
+}
+
 #[get("/status")]
 fn status(state: &rocket::State<Mutex<MyData>>) -> String {
     let mut mutable_data = state.lock().unwrap();
@@ -73,4 +104,5 @@ fn rocket() -> _ {
         .mount("/", routes![greet])
         .mount("/", routes![event])
         .mount("/", routes![snapshot])
+        .mount("/", routes![benchmark])
 }
