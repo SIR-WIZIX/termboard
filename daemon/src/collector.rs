@@ -19,6 +19,10 @@ impl SystemCollector {
         self.system.refresh_cpu_all();
     }
 
+    pub fn refresh_users(&mut self) {
+        self.users.refresh();
+    }
+
     pub fn refresh_processes_specifics(
         &mut self,
         processes_to_update: sysinfo::ProcessesToUpdate,
@@ -33,7 +37,7 @@ impl SystemCollector {
         );
     }
 
-    pub fn processes_snapshot(&mut self) -> Vec<ProcessSnapshot> {
+    pub fn refresh_processes_default(&mut self) {
         self.refresh_processes_specifics(
             sysinfo::ProcessesToUpdate::All,
             true,
@@ -45,6 +49,9 @@ impl SystemCollector {
                 .with_cmd(sysinfo::UpdateKind::Always)
                 .with_exe(sysinfo::UpdateKind::Always),
         );
+    }
+
+    pub fn processes_snapshot(&self) -> Vec<ProcessSnapshot> {
         let processes_raw = self.system.processes();
         let mut processes: Vec<ProcessSnapshot> = Vec::new();
 
@@ -78,8 +85,7 @@ impl SystemCollector {
         processes
     }
 
-    pub fn full_snapshot(&mut self) -> SystemSnapshot {
-        self.refresh_host();
+    pub fn full_snapshot(&self) -> SystemSnapshot {
         return SystemSnapshot {
             cpu_usage: self.system.global_cpu_usage(),
             mem_used_bytes: self.system.used_memory(),

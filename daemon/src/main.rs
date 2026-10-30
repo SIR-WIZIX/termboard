@@ -16,6 +16,9 @@ fn greet(name: String) -> String {
 fn snapshot(collector: &rocket::State<Mutex<collector::SystemCollector>>) -> String {
     let mut system_collector = collector.lock().unwrap();
 
+    let _ = system_collector.deref_mut().refresh_host();
+    let _ = system_collector.deref_mut().refresh_users();
+    let _ = system_collector.deref_mut().refresh_processes_default();
     let snapshot = system_collector.deref_mut().full_snapshot();
     format!("{snapshot:#?}")
 }
@@ -25,29 +28,93 @@ fn benchmark(collector: &rocket::State<Mutex<collector::SystemCollector>>) -> St
     let mut system_collector = collector.lock().unwrap();
 
     let start_time = std::time::SystemTime::now();
+    let _ = system_collector.deref_mut().refresh_host();
+    let _ = system_collector.deref_mut().refresh_users();
+    let _ = system_collector.deref_mut().refresh_processes_default();
     let _ = system_collector.deref_mut().full_snapshot();
     let full_snapshot_time = std::time::SystemTime::elapsed(&start_time);
     let start_time = std::time::SystemTime::now();
     let _ = system_collector.deref_mut().refresh_host();
     let refresh_host_time = std::time::SystemTime::elapsed(&start_time);
     let start_time = std::time::SystemTime::now();
-    let _ = system_collector.deref_mut().refresh_processes_specifics(
-        sysinfo::ProcessesToUpdate::All,
-        true,
-        sysinfo::ProcessRefreshKind::nothing()
-            .without_tasks()
-            .with_cpu()
-            .with_user(sysinfo::UpdateKind::Always)
-            .with_memory()
-            .with_cmd(sysinfo::UpdateKind::Always)
-            .with_exe(sysinfo::UpdateKind::Always),
-    );
+    let _ = system_collector.deref_mut().refresh_users();
+    let refresh_users_time = std::time::SystemTime::elapsed(&start_time);
+    let start_time = std::time::SystemTime::now();
+    let _ = system_collector.deref_mut().refresh_processes_default();
     let refresh_processes_time = std::time::SystemTime::elapsed(&start_time);
     format!(
-        "full snapshot time - {0}\nrefresh host time - {1}\nrefresh processes time - {2}",
+        "full snapshot time - {0}\nrefresh host time - {1}\nrefresh users time - {2}\nrefresh processes time - {3}",
         full_snapshot_time.unwrap_or_default().as_nanos(),
         refresh_host_time.unwrap_or_default().as_nanos(),
+        refresh_users_time.unwrap_or_default().as_nanos(),
         refresh_processes_time.unwrap_or_default().as_nanos(),
+    )
+}
+
+#[get("/debug/bench/<times>")]
+fn benchmark_series(
+    times: u32,
+    collector: &rocket::State<Mutex<collector::SystemCollector>>,
+) -> String {
+    let mut summary_refresh_processes_time = std::time::Duration::from_secs(0);
+    let mut summary_full_snapshot_time = std::time::Duration::from_secs(0);
+    let mut summary_refresh_host_time = std::time::Duration::from_secs(0);
+    let mut summary_refresh_users_time = std::time::Duration::from_secs(0);
+    let mut system_collector = collector.lock().unwrap();
+
+    for _ in 0..times {
+        let start_time = std::time::SystemTime::now();
+        let _ = system_collector.deref_mut().refresh_host();
+        let _ = system_collector.deref_mut().refresh_users();
+        let _ = system_collector.deref_mut().refresh_processes_default();
+        let _ = system_collector.deref_mut().full_snapshot();
+        summary_full_snapshot_time += std::time::SystemTime::elapsed(&start_time).unwrap();
+        let start_time = std::time::SystemTime::now();
+        let _ = system_collector.deref_mut().refresh_host();
+        summary_refresh_host_time += std::time::SystemTime::elapsed(&start_time).unwrap();
+        let start_time = std::time::SystemTime::now();
+        let _ = system_collector.deref_mut().refresh_users();
+        summary_refresh_users_time += std::time::SystemTime::elapsed(&start_time).unwrap();
+        let start_time = std::time::SystemTime::now();
+        let _ = system_collector.deref_mut().refresh_processes_specifics(
+            sysinfo::ProcessesToUpdate::All,
+            true,
+            sysinfo::ProcessRefreshKind::nothing()
+                .without_tasks()
+                .with_cpu()
+                .with_user(sysinfo::UpdateKind::Always)
+                .with_memory()
+                .with_cmd(sysinfo::UpdateKind::Always)
+                .with_exe(sysinfo::UpdateKind::Always),
+        );
+
+        summary_refresh_processes_time += std::time::SystemTime::elapsed(&start_time).unwrap();
+    }
+    format!(
+        "full snapshot time - {0}\nrefresh host time - {1}\nrefresh users time - {2}\nrefresh processes time - {3}",
+        summary_full_snapshot_time.as_nanos() / times as u128,
+        summary_refresh_host_time.as_nanos() / times as u128,
+        summary_refresh_users_time.as_nanos() / times as u128,
+        summary_refresh_processes_time.as_nanos() / times as u128,
+    )
+}
+
+#[get("/debug/bench/users/<times>")]
+fn benchmark_users(
+    times: u32,
+    collector: &rocket::State<Mutex<collector::SystemCollector>>,
+) -> String {
+    let mut summary_refresh_users_time = std::time::Duration::from_secs(0);
+    let mut system_collector = collector.lock().unwrap();
+
+    for _ in 0..times {
+        let start_time = std::time::SystemTime::now();
+        let _ = system_collector.deref_mut().refresh_users();
+        summary_refresh_users_time += std::time::SystemTime::elapsed(&start_time).unwrap();
+    }
+    format!(
+        "users refresh time - {0}",
+        summary_refresh_users_time.as_nanos() / times as u128,
     )
 }
 
@@ -105,4 +172,6 @@ fn rocket() -> _ {
         .mount("/", routes![event])
         .mount("/", routes![snapshot])
         .mount("/", routes![benchmark])
+        .mount("/", routes![benchmark_series])
+        .mount("/", routes![benchmark_users])
 }
