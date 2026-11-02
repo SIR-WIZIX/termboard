@@ -29,7 +29,6 @@ impl SystemCollector {
         remove_dead: bool,
         process_refresh_kind: sysinfo::ProcessRefreshKind,
     ) {
-        self.users.refresh();
         self.system.refresh_processes_specifics(
             processes_to_update,
             remove_dead,

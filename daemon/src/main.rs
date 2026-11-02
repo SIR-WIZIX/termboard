@@ -3,6 +3,7 @@ use common;
 use std::ops::{Deref, DerefMut};
 use std::sync::Mutex;
 mod collector;
+mod scheduler;
 
 #[macro_use]
 extern crate rocket;
@@ -20,6 +21,7 @@ fn snapshot(collector: &rocket::State<Mutex<collector::SystemCollector>>) -> Str
     let _ = system_collector.deref_mut().refresh_users();
     let _ = system_collector.deref_mut().refresh_processes_default();
     let snapshot = system_collector.deref_mut().full_snapshot();
+    std::mem::drop(system_collector);
     format!("{snapshot:#?}")
 }
 
@@ -42,6 +44,7 @@ fn benchmark(collector: &rocket::State<Mutex<collector::SystemCollector>>) -> St
     let start_time = std::time::SystemTime::now();
     let _ = system_collector.deref_mut().refresh_processes_default();
     let refresh_processes_time = std::time::SystemTime::elapsed(&start_time);
+    std::mem::drop(system_collector);
     format!(
         "full snapshot time - {0}\nrefresh host time - {1}\nrefresh users time - {2}\nrefresh processes time - {3}",
         full_snapshot_time.unwrap_or_default().as_nanos(),
