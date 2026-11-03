@@ -11,6 +11,7 @@ pub enum MonitoringMode {
     Incident,
 }
 
+#[derive(Debug, Clone, Copy)]
 struct Schedule {
     host_update_interval: std::time::Duration,
     users_update_interval: std::time::Duration,
@@ -122,20 +123,38 @@ impl Scheduler {
         }
     }
 
+    //TODO remove public setter in order for handeling possible data losses while switching from
+    //Incident
     pub fn set_operation_mode(&mut self, operation_mode: MonitoringMode) {
         self.operation_mode = operation_mode;
     }
 
-    fn tick(&mut self) {
+    //TODO same for removal
+    pub fn set_schedules(&mut self, schedules: Schedules) {
+        self.schedules = schedules;
+    }
+
+    fn tick(&mut self) -> std::time::Duration {
+        let schedule = self.schedules.behaviours[&self.operation_mode];
+        let mut next_tick: std::time::Duration = std::cmp::min(
+            schedule.host_update_interval,
+            std::cmp::min(
+                schedule.processes_update_interval,
+                schedule.users_update_interval,
+            ),
+        );
         match self.last_host_refresh {
             Option::None => {
                 self.refresh_host();
             }
             Option::Some(last_host_refresh) => {
-                if last_host_refresh.elapsed()
-                    > self.schedules.behaviours[&self.operation_mode].host_update_interval
-                {
+                if last_host_refresh.elapsed() >= schedule.host_update_interval {
                     self.refresh_host();
+                } else {
+                    next_tick = std::cmp::min(
+                        next_tick,
+                        last_host_refresh.elapsed() - schedule.host_update_interval,
+                    );
                 }
             }
         }
@@ -145,10 +164,13 @@ impl Scheduler {
                 self.refresh_users();
             }
             Option::Some(last_users_refresh) => {
-                if last_users_refresh.elapsed()
-                    > self.schedules.behaviours[&self.operation_mode].users_update_interval
-                {
+                if last_users_refresh.elapsed() >= schedule.users_update_interval {
                     self.refresh_users();
+                } else {
+                    next_tick = std::cmp::min(
+                        next_tick,
+                        last_users_refresh.elapsed() - schedule.users_update_interval,
+                    );
                 }
             }
         }
@@ -157,22 +179,26 @@ impl Scheduler {
             Option::None => {
                 self.refresh_processes_specifics(
                     ProcessesToUpdate::All,
-                    self.schedules.behaviours[&self.operation_mode].remove_dead_processes,
-                    self.schedules.behaviours[&self.operation_mode].process_refresh_kind,
+                    schedule.remove_dead_processes,
+                    schedule.process_refresh_kind,
                 );
             }
             Option::Some(last_processes_refresh) => {
-                if last_processes_refresh.elapsed()
-                    > self.schedules.behaviours[&self.operation_mode].processes_update_interval
-                {
+                if last_processes_refresh.elapsed() >= schedule.processes_update_interval {
                     self.refresh_processes_specifics(
                         ProcessesToUpdate::All,
-                        self.schedules.behaviours[&self.operation_mode].remove_dead_processes,
-                        self.schedules.behaviours[&self.operation_mode].process_refresh_kind,
+                        schedule.remove_dead_processes,
+                        schedule.process_refresh_kind,
+                    );
+                } else {
+                    next_tick = std::cmp::min(
+                        next_tick,
+                        last_processes_refresh.elapsed() - schedule.processes_update_interval,
                     );
                 }
             }
         }
+        next_tick
     }
 
     fn refresh_host(&mut self) {
