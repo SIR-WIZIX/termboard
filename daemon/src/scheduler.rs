@@ -1,11 +1,58 @@
+use std::collections::HashMap;
+
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate};
 
 use crate::collector;
 
-pub enum MachineState {
-    IDLE,
-    WATCHED,
-    INCIDENT,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MonitoringMode {
+    Background,
+    Interactive,
+    Incident,
+}
+
+struct Schedule {
+    host_update_interval: std::time::Duration,
+    users_update_interval: std::time::Duration,
+    processes_update_interval: std::time::Duration,
+}
+
+impl Default for Schedule {
+    fn default() -> Schedule {
+        Schedule {
+            host_update_interval: std::time::Duration::from_secs(2),
+            users_update_interval: std::time::Duration::from_mins(5),
+            processes_update_interval: std::time::Duration::from_secs(30),
+        }
+    }
+}
+
+impl Default for Schedules {
+    fn default() -> Schedules {
+        let mut hm = HashMap::new();
+        hm.insert(MonitoringMode::Background, Schedule::default());
+        hm.insert(
+            MonitoringMode::Interactive,
+            Schedule {
+                host_update_interval: std::time::Duration::from_secs(1),
+                users_update_interval: std::time::Duration::from_mins(5),
+                processes_update_interval: std::time::Duration::from_secs(5),
+            },
+        );
+        hm.insert(
+            MonitoringMode::Incident,
+            Schedule {
+                host_update_interval: std::time::Duration::from_secs(1),
+                users_update_interval: std::time::Duration::from_mins(1),
+                processes_update_interval: std::time::Duration::from_secs(2),
+            },
+        );
+        Schedules { behaviours: hm }
+    }
+}
+
+pub struct Schedules {
+    behaviours: HashMap<MonitoringMode, Schedule>,
 }
 
 pub struct Scheduler {
@@ -17,20 +64,31 @@ pub struct Scheduler {
     last_processes_refresh: Option<std::time::Instant>,
     system_collector: collector::SystemCollector,
 
-    host_update_interval: std::time::Duration,
-    users_update_interval: std::time::Duration,
-    processes_update_interval: std::time::Duration,
+    operation_mode: MonitoringMode,
 
-    operation_mode: MachineState,
+    schedules: Schedules,
+}
+
+impl Default for Scheduler {
+    fn default() -> Self {
+        Scheduler {
+            last_host_refresh_request: None,
+            last_users_refresh_request: None,
+            last_processes_refresh_request: None,
+            last_host_refresh: None,
+            last_users_refresh: None,
+            last_processes_refresh: None,
+            system_collector: collector::SystemCollector::new(),
+
+            operation_mode: MonitoringMode::Background,
+
+            schedules: Schedules::default(),
+        }
+    }
 }
 
 impl Scheduler {
-    pub fn new(
-        collector: collector::SystemCollector,
-        host_update_interval: std::time::Duration,
-        users_update_interval: std::time::Duration,
-        processes_update_interval: std::time::Duration,
-    ) -> Scheduler {
+    pub fn new(collector: collector::SystemCollector, schedules: Schedules) -> Scheduler {
         Self {
             last_host_refresh_request: Option::None,
             last_users_refresh_request: Option::None,
@@ -39,19 +97,57 @@ impl Scheduler {
             last_users_refresh: Option::None,
             last_processes_refresh: Option::None,
             system_collector: collector,
-            host_update_interval: host_update_interval,
-            users_update_interval: users_update_interval,
-            processes_update_interval: processes_update_interval,
 
-            operation_mode: MachineState::IDLE,
+            operation_mode: MonitoringMode::Background,
+
+            schedules: schedules,
         }
     }
 
-    pub fn set_operation_mode(&mut self, operation_mode: MachineState) {
+    pub fn set_operation_mode(&mut self, operation_mode: MonitoringMode) {
         self.operation_mode = operation_mode;
     }
 
-    fn tick(&self) {}
+    fn tick(&mut self) {
+        match self.last_host_refresh {
+            Option::None => {
+                self.refresh_host();
+            }
+            Option::Some(last_host_refresh) => {
+                if last_host_refresh.elapsed()
+                    > self.schedules.behaviours[&self.operation_mode].host_update_interval
+                {
+                    self.refresh_host();
+                }
+            }
+        }
+
+        match self.last_users_refresh {
+            Option::None => {
+                self.refresh_users();
+            }
+            Option::Some(last_users_refresh) => {
+                if last_users_refresh.elapsed()
+                    > self.schedules.behaviours[&self.operation_mode].users_update_interval
+                {
+                    self.refresh_users();
+                }
+            }
+        }
+
+        match self.last_processes_refresh {
+            Option::None => {
+                self.refresh_processes_default();
+            }
+            Option::Some(last_processes_refresh) => {
+                if last_processes_refresh.elapsed()
+                    > self.schedules.behaviours[&self.operation_mode].processes_update_interval
+                {
+                    self.refresh_processes_default();
+                }
+            }
+        }
+    }
 
     fn refresh_host(&mut self) {
         self.last_host_refresh_request = Option::Some(std::time::Instant::now());
