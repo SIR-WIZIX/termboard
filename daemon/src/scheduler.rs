@@ -15,6 +15,9 @@ struct Schedule {
     host_update_interval: std::time::Duration,
     users_update_interval: std::time::Duration,
     processes_update_interval: std::time::Duration,
+
+    process_refresh_kind: sysinfo::ProcessRefreshKind,
+    remove_dead_processes: bool,
 }
 
 impl Default for Schedule {
@@ -23,6 +26,15 @@ impl Default for Schedule {
             host_update_interval: std::time::Duration::from_secs(2),
             users_update_interval: std::time::Duration::from_mins(5),
             processes_update_interval: std::time::Duration::from_secs(30),
+
+            process_refresh_kind: sysinfo::ProcessRefreshKind::nothing()
+                .without_tasks()
+                .with_cpu()
+                .with_user(sysinfo::UpdateKind::Always)
+                .with_memory()
+                .with_cmd(sysinfo::UpdateKind::Always)
+                .with_exe(sysinfo::UpdateKind::Always),
+            remove_dead_processes: true,
         }
     }
 }
@@ -37,6 +49,9 @@ impl Default for Schedules {
                 host_update_interval: std::time::Duration::from_secs(1),
                 users_update_interval: std::time::Duration::from_mins(5),
                 processes_update_interval: std::time::Duration::from_secs(5),
+
+                remove_dead_processes: true,
+                ..Schedule::default()
             },
         );
         hm.insert(
@@ -45,6 +60,9 @@ impl Default for Schedules {
                 host_update_interval: std::time::Duration::from_secs(1),
                 users_update_interval: std::time::Duration::from_mins(1),
                 processes_update_interval: std::time::Duration::from_secs(2),
+
+                remove_dead_processes: false,
+                ..Schedule::default()
             },
         );
         Schedules { behaviours: hm }
@@ -137,13 +155,21 @@ impl Scheduler {
 
         match self.last_processes_refresh {
             Option::None => {
-                self.refresh_processes_default();
+                self.refresh_processes_specifics(
+                    ProcessesToUpdate::All,
+                    self.schedules.behaviours[&self.operation_mode].remove_dead_processes,
+                    self.schedules.behaviours[&self.operation_mode].process_refresh_kind,
+                );
             }
             Option::Some(last_processes_refresh) => {
                 if last_processes_refresh.elapsed()
                     > self.schedules.behaviours[&self.operation_mode].processes_update_interval
                 {
-                    self.refresh_processes_default();
+                    self.refresh_processes_specifics(
+                        ProcessesToUpdate::All,
+                        self.schedules.behaviours[&self.operation_mode].remove_dead_processes,
+                        self.schedules.behaviours[&self.operation_mode].process_refresh_kind,
+                    );
                 }
             }
         }
