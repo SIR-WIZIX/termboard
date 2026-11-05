@@ -136,13 +136,7 @@ impl Scheduler {
 
     fn tick(&mut self) -> std::time::Duration {
         let schedule = self.schedules.behaviours[&self.operation_mode];
-        let mut next_tick: std::time::Duration = std::cmp::min(
-            schedule.host_update_interval,
-            std::cmp::min(
-                schedule.processes_update_interval,
-                schedule.users_update_interval,
-            ),
-        );
+        let mut next_tick = schedule.host_update_interval;
         match self.last_host_refresh {
             Option::None => {
                 self.refresh_host();
@@ -153,7 +147,9 @@ impl Scheduler {
                 } else {
                     next_tick = std::cmp::min(
                         next_tick,
-                        last_host_refresh.elapsed() - schedule.host_update_interval,
+                        schedule
+                            .host_update_interval
+                            .abs_diff(last_host_refresh.elapsed()),
                     );
                 }
             }
@@ -169,7 +165,9 @@ impl Scheduler {
                 } else {
                     next_tick = std::cmp::min(
                         next_tick,
-                        last_users_refresh.elapsed() - schedule.users_update_interval,
+                        schedule
+                            .users_update_interval
+                            .abs_diff(last_users_refresh.elapsed()),
                     );
                 }
             }
@@ -193,12 +191,23 @@ impl Scheduler {
                 } else {
                     next_tick = std::cmp::min(
                         next_tick,
-                        last_processes_refresh.elapsed() - schedule.processes_update_interval,
+                        schedule
+                            .processes_update_interval
+                            .abs_diff(last_processes_refresh.elapsed()),
                     );
                 }
             }
         }
-        next_tick
+        std::cmp::min(
+            next_tick,
+            std::cmp::min(
+                schedule.host_update_interval,
+                std::cmp::min(
+                    schedule.processes_update_interval,
+                    schedule.users_update_interval,
+                ),
+            ),
+        )
     }
 
     fn refresh_host(&mut self) {
