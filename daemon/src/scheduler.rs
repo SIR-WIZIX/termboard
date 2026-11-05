@@ -136,7 +136,6 @@ impl Scheduler {
 
     fn tick(&mut self) -> std::time::Duration {
         let schedule = self.schedules.behaviours[&self.operation_mode];
-        let mut next_tick = schedule.host_update_interval;
         match self.last_host_refresh {
             Option::None => {
                 self.refresh_host();
@@ -144,13 +143,6 @@ impl Scheduler {
             Option::Some(last_host_refresh) => {
                 if last_host_refresh.elapsed() >= schedule.host_update_interval {
                     self.refresh_host();
-                } else {
-                    next_tick = std::cmp::min(
-                        next_tick,
-                        schedule
-                            .host_update_interval
-                            .abs_diff(last_host_refresh.elapsed()),
-                    );
                 }
             }
         }
@@ -162,13 +154,6 @@ impl Scheduler {
             Option::Some(last_users_refresh) => {
                 if last_users_refresh.elapsed() >= schedule.users_update_interval {
                     self.refresh_users();
-                } else {
-                    next_tick = std::cmp::min(
-                        next_tick,
-                        schedule
-                            .users_update_interval
-                            .abs_diff(last_users_refresh.elapsed()),
-                    );
                 }
             }
         }
@@ -188,23 +173,26 @@ impl Scheduler {
                         schedule.remove_dead_processes,
                         schedule.process_refresh_kind,
                     );
-                } else {
-                    next_tick = std::cmp::min(
-                        next_tick,
-                        schedule
-                            .processes_update_interval
-                            .abs_diff(last_processes_refresh.elapsed()),
-                    );
                 }
             }
         }
+
         std::cmp::min(
-            next_tick,
+            schedule.host_update_interval.saturating_sub(
+                self.last_host_refresh
+                    .unwrap_or(std::time::Instant::now())
+                    .elapsed(),
+            ),
             std::cmp::min(
-                schedule.host_update_interval,
-                std::cmp::min(
-                    schedule.processes_update_interval,
-                    schedule.users_update_interval,
+                schedule.users_update_interval.saturating_sub(
+                    self.last_users_refresh
+                        .unwrap_or(std::time::Instant::now())
+                        .elapsed(),
+                ),
+                schedule.processes_update_interval.saturating_sub(
+                    self.last_processes_refresh
+                        .unwrap_or(std::time::Instant::now())
+                        .elapsed(),
                 ),
             ),
         )
