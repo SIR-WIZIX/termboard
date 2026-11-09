@@ -2,6 +2,7 @@ use chrono;
 use common;
 use std::ops::{Deref, DerefMut};
 use std::sync::Mutex;
+use std::thread::sleep;
 mod collector;
 mod scheduler;
 
@@ -23,6 +24,23 @@ fn snapshot(collector: &rocket::State<Mutex<collector::SystemCollector>>) -> Str
     let snapshot = system_collector.deref_mut().full_snapshot();
     std::mem::drop(system_collector);
     format!("{snapshot:#?}")
+}
+
+#[get("/debug/tick")]
+fn tick() -> String {
+    let mut scheduler = scheduler::Scheduler::default();
+
+    let spare = scheduler.tick();
+
+    let s1 = scheduler.get_collector().full_snapshot();
+
+    sleep(spare);
+
+    let _ = scheduler.tick();
+
+    let s2 = scheduler.get_collector().full_snapshot();
+
+    format!("{spare:?}\n{s1:#?} \n{s2:#?}")
 }
 
 #[get("/debug/bench")]
@@ -177,4 +195,5 @@ fn rocket() -> _ {
         .mount("/", routes![benchmark])
         .mount("/", routes![benchmark_series])
         .mount("/", routes![benchmark_users])
+        .mount("/", routes![tick])
 }

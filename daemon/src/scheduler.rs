@@ -134,7 +134,7 @@ impl Scheduler {
         self.schedules = schedules;
     }
 
-    fn tick(&mut self) -> std::time::Duration {
+    pub fn tick(&mut self) -> std::time::Duration {
         let schedule = self.schedules.behaviours[&self.operation_mode];
         match self.last_host_refresh {
             Option::None => {
@@ -226,5 +226,31 @@ impl Scheduler {
         self.system_collector
             .refresh_processes_specifics(processes, remove_dead, refresh_kind);
         self.last_processes_refresh = Option::Some(std::time::Instant::now());
+    }
+
+    fn refresh_processes(&mut self) {
+        let schedule = self.schedules.behaviours[&self.operation_mode];
+        self.last_processes_refresh_request = Option::Some(std::time::Instant::now());
+        self.system_collector.refresh_processes_specifics(
+            sysinfo::ProcessesToUpdate::All,
+            schedule.remove_dead_processes,
+            schedule.process_refresh_kind,
+        );
+        self.last_processes_refresh = Option::Some(std::time::Instant::now());
+    }
+
+    pub fn force_refresh_processes(&mut self) {
+        self.refresh_processes();
+    }
+
+    pub fn force_refresh_users(&mut self) {
+        self.refresh_users();
+    }
+    pub fn force_refresh_host(&mut self) {
+        self.refresh_host();
+    }
+
+    pub fn get_collector(&self) -> &collector::SystemCollector {
+        &self.system_collector
     }
 }

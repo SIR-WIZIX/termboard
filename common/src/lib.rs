@@ -61,5 +61,7 @@ pub struct SystemSnapshot {
     pub swap_available_bytes: u64, //in bytes
     pub uptime: std::time::Duration,
     pub processes: std::vec::Vec<ProcessSnapshot>,
-    pub snapshot_time: std::time::SystemTime,
+    pub process_snapshot_time: Option<std::time::SystemTime>,
+    pub users_snapshot_time: Option<std::time::SystemTime>,
+    pub host_snapshot_time: Option<std::time::SystemTime>,
 }

@@ -4,6 +4,10 @@ use sysinfo;
 pub struct SystemCollector {
     system: sysinfo::System,
     users: sysinfo::Users,
+
+    processes_refresh_time: Option<std::time::SystemTime>,
+    host_refresh_time: Option<std::time::SystemTime>,
+    users_refresh_time: Option<std::time::SystemTime>,
 }
 
 impl SystemCollector {
@@ -11,16 +15,21 @@ impl SystemCollector {
         Self {
             system: sysinfo::System::new(),
             users: sysinfo::Users::new(),
+            processes_refresh_time: None,
+            host_refresh_time: None,
+            users_refresh_time: None,
         }
     }
 
     pub fn refresh_host(&mut self) {
         self.system.refresh_memory();
         self.system.refresh_cpu_all();
+        self.host_refresh_time = Some(std::time::SystemTime::now());
     }
 
     pub fn refresh_users(&mut self) {
         self.users.refresh();
+        self.users_refresh_time = Some(std::time::SystemTime::now());
     }
 
     pub fn refresh_processes_specifics(
@@ -34,6 +43,7 @@ impl SystemCollector {
             remove_dead,
             process_refresh_kind,
         );
+        self.processes_refresh_time = Some(std::time::SystemTime::now());
     }
 
     pub fn refresh_processes_default(&mut self) {
@@ -48,6 +58,7 @@ impl SystemCollector {
                 .with_cmd(sysinfo::UpdateKind::Always)
                 .with_exe(sysinfo::UpdateKind::Always),
         );
+        self.processes_refresh_time = Some(std::time::SystemTime::now());
     }
 
     pub fn processes_snapshot(&self) -> Vec<ProcessSnapshot> {
@@ -93,7 +104,9 @@ impl SystemCollector {
             swap_used_bytes: self.system.used_swap(),
             swap_total_bytes: self.system.total_swap(),
             swap_available_bytes: self.system.free_swap(),
-            snapshot_time: std::time::SystemTime::now(),
+            process_snapshot_time: self.processes_refresh_time,
+            users_snapshot_time: self.users_refresh_time,
+            host_snapshot_time: self.host_refresh_time,
             uptime: std::time::Duration::from_secs(sysinfo::System::uptime()),
             processes: self.processes_snapshot(),
         };
