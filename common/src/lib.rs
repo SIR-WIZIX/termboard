@@ -65,3 +65,17 @@ pub struct SystemSnapshot {
     pub users_snapshot_time: Option<std::time::SystemTime>,
     pub host_snapshot_time: Option<std::time::SystemTime>,
 }
+
+#[derive(Debug)]
+pub struct HostSnapshot {
+    pub cpu_usage: f32,            //in percents
+    pub mem_used_bytes: u64,       //in bytes
+    pub mem_total_bytes: u64,      //in bytes
+    pub mem_available_bytes: u64,  //in bytes
+    pub swap_used_bytes: u64,      //in bytes
+    pub swap_total_bytes: u64,     //in bytes
+    pub swap_available_bytes: u64, //in bytes
+    pub uptime: std::time::Duration,
+    pub users_snapshot_time: Option<std::time::SystemTime>,
+    pub host_snapshot_time: Option<std::time::SystemTime>,
+}

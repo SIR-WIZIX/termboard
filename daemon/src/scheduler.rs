@@ -210,6 +210,7 @@ impl Scheduler {
         self.last_users_refresh = Option::Some(std::time::Instant::now());
     }
 
+    #[cfg(feature = "debug-tools")]
     fn refresh_processes_default(&mut self) {
         self.last_processes_refresh_request = Option::Some(std::time::Instant::now());
         self.system_collector.refresh_processes_default();

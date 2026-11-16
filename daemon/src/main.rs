@@ -1,19 +1,28 @@
 use chrono;
 use common;
-use std::ops::{Deref, DerefMut};
-use std::sync::Mutex;
-use std::thread::sleep;
+use std::sync::{Arc, Mutex};
+
 mod collector;
 mod scheduler;
 
 #[macro_use]
 extern crate rocket;
 
+pub enum SchedulerCommand {
+    SetMode(scheduler::MonitoringMode),
+    ForceRefreshUsers,
+    ForceRefreshHost,
+    ForceRefreshProcesses,
+    UpdateSystemSnapshot,
+    UpdateHostSnapshot,
+    Stop,
+}
+
 #[get("/hello/<name>")]
 fn greet(name: String) -> String {
     format!("Hello {name}!")
 }
-
+#[cfg(feature = "debug-tools")]
 #[get("/debug/snapshot")]
 fn snapshot(collector: &rocket::State<Mutex<collector::SystemCollector>>) -> String {
     let mut system_collector = collector.lock().unwrap();
@@ -25,7 +34,7 @@ fn snapshot(collector: &rocket::State<Mutex<collector::SystemCollector>>) -> Str
     std::mem::drop(system_collector);
     format!("{snapshot:#?}")
 }
-
+#[cfg(feature = "debug-tools")]
 #[get("/debug/tick")]
 fn tick() -> String {
     let mut scheduler = scheduler::Scheduler::default();
@@ -42,7 +51,7 @@ fn tick() -> String {
 
     format!("{spare:?}\n{s1:#?} \n{s2:#?}")
 }
-
+#[cfg(feature = "debug-tools")]
 #[get("/debug/bench")]
 fn benchmark(collector: &rocket::State<Mutex<collector::SystemCollector>>) -> String {
     let mut system_collector = collector.lock().unwrap();
@@ -71,7 +80,7 @@ fn benchmark(collector: &rocket::State<Mutex<collector::SystemCollector>>) -> St
         refresh_processes_time.unwrap_or_default().as_nanos(),
     )
 }
-
+#[cfg(feature = "debug-tools")]
 #[get("/debug/bench/<times>")]
 fn benchmark_series(
     times: u32,
@@ -120,6 +129,7 @@ fn benchmark_series(
     )
 }
 
+#[cfg(feature = "debug-tools")]
 #[get("/debug/bench/users/<times>")]
 fn benchmark_users(
     times: u32,
@@ -139,22 +149,6 @@ fn benchmark_users(
     )
 }
 
-#[get("/status")]
-fn status(state: &rocket::State<Mutex<MyData>>) -> String {
-    let mut mutable_data = state.lock().unwrap();
-    let out: i32;
-    (*mutable_data, out) = increase(mutable_data.deref());
-    print!(
-        "status called on thread {:?}\r\n",
-        std::thread::current().id()
-    );
-    format!(
-        "OK attempt: {0} on thread: {1:?}\r\n",
-        out,
-        std::thread::current().id()
-    )
-}
-
 #[get("/event")]
 fn event(event: &rocket::State<Mutex<common::Event>>) -> String {
     let inner_event = event.lock().unwrap();
@@ -162,16 +156,6 @@ fn event(event: &rocket::State<Mutex<common::Event>>) -> String {
     let level = inner_event.level.to_string();
     let text = inner_event.text.clone();
     format!("{0} - level:{1} msg:{2}", time, level, text,)
-}
-
-fn increase(a: &MyData) -> (MyData, i32) {
-    let md = MyData { data: a.data + 1 };
-    let num: i32 = md.data;
-    (md, num)
-}
-
-struct MyData {
-    data: i32,
 }
 
 #[launch]
@@ -182,18 +166,67 @@ fn rocket() -> _ {
         level: common::LogLevel::Info,
     };
 
-    let data: MyData = MyData { data: 0 };
+    let mut scheduler = scheduler::Scheduler::default();
+    let system_snapshot_slot =
+        std::sync::Arc::new(Mutex::new(Arc::new(None::<common::SystemSnapshot>)));
+    let host_snapshot_slot =
+        std::sync::Arc::new(Mutex::new(Arc::new(None::<common::HostSnapshot>)));
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    let worker_system_snapshot_slot = Arc::clone(&system_snapshot_slot);
+    let worker_host_snapshot_slot = Arc::clone(&host_snapshot_slot);
+    let worker = std::thread::spawn(move || {
+        let mut timeout = scheduler.tick();
+        loop {
+            match rx.recv_timeout(timeout) {
+                Ok(SchedulerCommand::SetMode(mode)) => {
+                    scheduler.set_operation_mode(mode);
+                    timeout = scheduler.tick();
+                }
+                Ok(SchedulerCommand::Stop) => {
+                    break;
+                }
+                Ok(SchedulerCommand::ForceRefreshUsers) => {
+                    scheduler.force_refresh_users();
+                }
+                Ok(SchedulerCommand::ForceRefreshHost) => {
+                    scheduler.force_refresh_host();
+                }
+                Ok(SchedulerCommand::ForceRefreshProcesses) => {
+                    scheduler.force_refresh_processes();
+                }
+                Ok(SchedulerCommand::UpdateSystemSnapshot) => {
+                    *worker_system_snapshot_slot.lock().unwrap() =
+                        Arc::new(Some(scheduler.get_collector().full_snapshot()));
+                }
+                Ok(SchedulerCommand::UpdateHostSnapshot) => {
+                    *worker_host_snapshot_slot.lock().unwrap() =
+                        Arc::new(Some(scheduler.get_collector().host_snapshot()));
+                }
+                Err(_) => {
+                    timeout = scheduler.tick();
+                }
+            }
+        }
+    });
+
+    //tx.send(SchedulerCommand::Stop);
+
     let collector = collector::SystemCollector::new();
-    rocket::build()
-        .manage(Mutex::new(data))
+    let rocket = rocket::build()
         .manage(Mutex::new(event))
         .manage(Mutex::new(collector))
-        .mount("/", routes![status])
+        .manage(system_snapshot_slot)
+        .manage(host_snapshot_slot)
+        .manage(tx)
         .mount("/", routes![greet])
-        .mount("/", routes![event])
-        .mount("/", routes![snapshot])
-        .mount("/", routes![benchmark])
-        .mount("/", routes![benchmark_series])
-        .mount("/", routes![benchmark_users])
-        .mount("/", routes![tick])
+        .mount("/", routes![event]);
+
+    #[cfg(feature = "debug-tools")]
+    let rocket = rocket.mount(
+        "/",
+        routes![snapshot, benchmark, benchmark_series, benchmark_users, tick],
+    );
+
+    rocket
 }

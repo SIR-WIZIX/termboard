@@ -1,4 +1,4 @@
-use common::{self, ProcessSnapshot, SystemSnapshot};
+use common::{self, HostSnapshot, ProcessSnapshot, SystemSnapshot};
 use sysinfo;
 
 pub struct SystemCollector {
@@ -46,6 +46,7 @@ impl SystemCollector {
         self.processes_refresh_time = Some(std::time::SystemTime::now());
     }
 
+    #[cfg(feature = "debug-tools")]
     pub fn refresh_processes_default(&mut self) {
         self.refresh_processes_specifics(
             sysinfo::ProcessesToUpdate::All,
@@ -58,7 +59,6 @@ impl SystemCollector {
                 .with_cmd(sysinfo::UpdateKind::Always)
                 .with_exe(sysinfo::UpdateKind::Always),
         );
-        self.processes_refresh_time = Some(std::time::SystemTime::now());
     }
 
     pub fn processes_snapshot(&self) -> Vec<ProcessSnapshot> {
@@ -109,6 +109,21 @@ impl SystemCollector {
             host_snapshot_time: self.host_refresh_time,
             uptime: std::time::Duration::from_secs(sysinfo::System::uptime()),
             processes: self.processes_snapshot(),
+        };
+    }
+
+    pub fn host_snapshot(&self) -> HostSnapshot {
+        return HostSnapshot {
+            cpu_usage: self.system.global_cpu_usage(),
+            mem_used_bytes: self.system.used_memory(),
+            mem_total_bytes: self.system.total_memory(),
+            mem_available_bytes: self.system.available_memory(),
+            swap_used_bytes: self.system.used_swap(),
+            swap_total_bytes: self.system.total_swap(),
+            swap_available_bytes: self.system.free_swap(),
+            users_snapshot_time: self.users_refresh_time,
+            host_snapshot_time: self.host_refresh_time,
+            uptime: std::time::Duration::from_secs(sysinfo::System::uptime()),
         };
     }
 }
