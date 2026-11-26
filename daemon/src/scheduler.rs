@@ -1,14 +1,80 @@
-use std::collections::HashMap;
+use core::fmt;
+use std::{
+    collections::HashMap,
+    error::Error,
+    sync::{
+        Arc, Mutex,
+        mpsc::{Receiver, Sender},
+    },
+    thread::JoinHandle,
+};
 
+use common::{HostSnapshot, SystemSnapshot};
+use rocket::tokio::sync::AcquireError;
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate};
 
-use crate::collector;
+use crate::{collector, system_snapshot};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MonitoringMode {
     Background,
     Interactive,
     Incident,
+}
+
+pub enum SchedulerCommand {
+    SetMode(MonitoringMode),
+    ForceRefreshUsers,
+    ForceRefreshHost,
+    ForceRefreshProcesses,
+    UpdateSystemSnapshot,
+    UpdateHostSnapshot,
+    Stop,
+}
+
+#[derive(Debug)]
+pub enum SchedulerConfigurationError {
+    MissingSchedule(MonitoringMode),
+    InvalidHostInterval(MonitoringMode),
+    InvalidUsersInterval(MonitoringMode),
+    InvalidProcessesInterval(MonitoringMode),
+}
+
+impl std::fmt::Display for SchedulerConfigurationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.to_string())
+    }
+}
+impl std::error::Error for SchedulerConfigurationError {}
+
+#[derive(Debug)]
+pub enum SchedulerStartError {
+    Configuration(SchedulerConfigurationError),
+    ThreadSpawn(std::io::Error),
+}
+impl std::fmt::Display for SchedulerStartError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.to_string())
+    }
+}
+impl From<SchedulerConfigurationError> for SchedulerStartError {
+    fn from(err: SchedulerConfigurationError) -> Self {
+        Self::Configuration(err)
+    }
+}
+impl From<std::io::Error> for SchedulerStartError {
+    fn from(err: std::io::Error) -> Self {
+        Self::ThreadSpawn(err)
+    }
+}
+
+type SnapshotSlot<T> = Arc<Mutex<Option<Arc<T>>>>;
+
+pub struct SchedulerHandle {
+    pub tx: Sender<SchedulerCommand>,
+    pub worker: JoinHandle<()>,
+    pub system_snapshot: SnapshotSlot<common::SystemSnapshot>,
+    pub host_snapshot: SnapshotSlot<common::HostSnapshot>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -73,6 +139,30 @@ impl Default for Schedules {
 pub struct Schedules {
     behaviours: HashMap<MonitoringMode, Schedule>,
 }
+impl Schedules {
+    fn validate(&self) -> Result<(), SchedulerConfigurationError> {
+        for mode in [
+            MonitoringMode::Background,
+            MonitoringMode::Interactive,
+            MonitoringMode::Incident,
+        ] {
+            if !self.behaviours.contains_key(&mode) {
+                return Err(SchedulerConfigurationError::MissingSchedule(mode));
+            }
+            if self.behaviours[&mode].host_update_interval <= std::time::Duration::from_secs(0) {
+                return Err(SchedulerConfigurationError::InvalidHostInterval(mode));
+            }
+            if self.behaviours[&mode].users_update_interval <= std::time::Duration::from_secs(0) {
+                return Err(SchedulerConfigurationError::InvalidUsersInterval(mode));
+            }
+            if self.behaviours[&mode].processes_update_interval <= std::time::Duration::from_secs(0)
+            {
+                return Err(SchedulerConfigurationError::InvalidProcessesInterval(mode));
+            }
+        }
+        return Ok(());
+    }
+}
 
 pub struct Scheduler {
     last_host_refresh_request: Option<std::time::Instant>,
@@ -123,9 +213,76 @@ impl Scheduler {
         }
     }
 
+    fn run(
+        &mut self,
+        rx: Receiver<SchedulerCommand>,
+        worker_system_snapshot_slot: SnapshotSlot<SystemSnapshot>,
+        worker_host_snapshot_slot: SnapshotSlot<HostSnapshot>,
+    ) {
+        let mut timeout = self.tick();
+        let mut next_due = std::time::Instant::now() + timeout;
+        loop {
+            match rx.recv_timeout(timeout) {
+                Ok(SchedulerCommand::SetMode(mode)) => {
+                    self.set_operation_mode(mode);
+                    timeout = self.tick();
+                    next_due = std::time::Instant::now() + timeout;
+                }
+                Ok(SchedulerCommand::Stop) => {
+                    break;
+                }
+                Ok(SchedulerCommand::ForceRefreshUsers) => {
+                    self.force_refresh_users();
+                }
+                Ok(SchedulerCommand::ForceRefreshHost) => {
+                    self.force_refresh_host();
+                }
+                Ok(SchedulerCommand::ForceRefreshProcesses) => {
+                    self.force_refresh_processes();
+                }
+                Ok(SchedulerCommand::UpdateSystemSnapshot) => {
+                    *worker_system_snapshot_slot.lock().unwrap() =
+                        Some(Arc::new(self.get_collector().full_snapshot()));
+                }
+                Ok(SchedulerCommand::UpdateHostSnapshot) => {
+                    *worker_host_snapshot_slot.lock().unwrap() =
+                        Some(Arc::new(self.get_collector().host_snapshot()));
+                }
+                Err(_) => {
+                    timeout = self.tick();
+                    next_due = std::time::Instant::now() + timeout;
+                }
+            }
+            timeout = next_due - std::time::Instant::now();
+            println!("{:?} - timeout at {:?}", timeout, std::time::Instant::now())
+        }
+    }
+
+    pub fn start(mut self) -> Result<SchedulerHandle, SchedulerStartError> {
+        self.schedules.validate()?;
+        let system_snapshot_slot: SnapshotSlot<SystemSnapshot> =
+            std::sync::Arc::new(Mutex::new(None));
+        let host_snapshot_slot: SnapshotSlot<HostSnapshot> = std::sync::Arc::new(Mutex::new(None));
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let worker_system_snapshot_slot = Arc::clone(&system_snapshot_slot);
+        let worker_host_snapshot_slot = Arc::clone(&host_snapshot_slot);
+
+        let worker = std::thread::Builder::new()
+            .name("termboard-scheduler".into())
+            .spawn(move || self.run(rx, worker_system_snapshot_slot, worker_host_snapshot_slot))?;
+
+        Ok(SchedulerHandle {
+            tx: tx,
+            worker: worker,
+            system_snapshot: system_snapshot_slot,
+            host_snapshot: host_snapshot_slot,
+        })
+    }
+
     //TODO remove public setter in order for handeling possible data losses while switching from
     //Incident
-    pub fn set_operation_mode(&mut self, operation_mode: MonitoringMode) {
+    fn set_operation_mode(&mut self, operation_mode: MonitoringMode) {
         self.operation_mode = operation_mode;
     }
 

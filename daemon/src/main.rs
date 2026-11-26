@@ -1,6 +1,6 @@
 use chrono;
 use common;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc::Sender};
 
 mod collector;
 mod scheduler;
@@ -8,20 +8,6 @@ mod scheduler;
 #[macro_use]
 extern crate rocket;
 
-pub enum SchedulerCommand {
-    SetMode(scheduler::MonitoringMode),
-    ForceRefreshUsers,
-    ForceRefreshHost,
-    ForceRefreshProcesses,
-    UpdateSystemSnapshot,
-    UpdateHostSnapshot,
-    Stop,
-}
-
-#[get("/hello/<name>")]
-fn greet(name: String) -> String {
-    format!("Hello {name}!")
-}
 #[cfg(feature = "debug-tools")]
 #[get("/debug/snapshot")]
 fn snapshot(collector: &rocket::State<Mutex<collector::SystemCollector>>) -> String {
@@ -149,6 +135,13 @@ fn benchmark_users(
     )
 }
 
+#[get("/debug/system_snapshot")]
+fn system_snapshot(tx: &rocket::State<Mutex<Sender<scheduler::SchedulerCommand>>>) -> String {
+    let inner_tx = tx.lock().unwrap();
+    let _ = inner_tx.send(scheduler::SchedulerCommand::UpdateSystemSnapshot);
+    "OK".into()
+}
+
 #[get("/event")]
 fn event(event: &rocket::State<Mutex<common::Event>>) -> String {
     let inner_event = event.lock().unwrap();
@@ -166,61 +159,23 @@ fn rocket() -> _ {
         level: common::LogLevel::Info,
     };
 
-    let mut scheduler = scheduler::Scheduler::default();
-    let system_snapshot_slot =
-        std::sync::Arc::new(Mutex::new(Arc::new(None::<common::SystemSnapshot>)));
-    let host_snapshot_slot =
-        std::sync::Arc::new(Mutex::new(Arc::new(None::<common::HostSnapshot>)));
-    let (tx, rx) = std::sync::mpsc::channel();
+    let scheduler = scheduler::Scheduler::default();
+    let handle = scheduler.start();
 
-    let worker_system_snapshot_slot = Arc::clone(&system_snapshot_slot);
-    let worker_host_snapshot_slot = Arc::clone(&host_snapshot_slot);
-    let worker = std::thread::spawn(move || {
-        let mut timeout = scheduler.tick();
-        loop {
-            match rx.recv_timeout(timeout) {
-                Ok(SchedulerCommand::SetMode(mode)) => {
-                    scheduler.set_operation_mode(mode);
-                    timeout = scheduler.tick();
-                }
-                Ok(SchedulerCommand::Stop) => {
-                    break;
-                }
-                Ok(SchedulerCommand::ForceRefreshUsers) => {
-                    scheduler.force_refresh_users();
-                }
-                Ok(SchedulerCommand::ForceRefreshHost) => {
-                    scheduler.force_refresh_host();
-                }
-                Ok(SchedulerCommand::ForceRefreshProcesses) => {
-                    scheduler.force_refresh_processes();
-                }
-                Ok(SchedulerCommand::UpdateSystemSnapshot) => {
-                    *worker_system_snapshot_slot.lock().unwrap() =
-                        Arc::new(Some(scheduler.get_collector().full_snapshot()));
-                }
-                Ok(SchedulerCommand::UpdateHostSnapshot) => {
-                    *worker_host_snapshot_slot.lock().unwrap() =
-                        Arc::new(Some(scheduler.get_collector().host_snapshot()));
-                }
-                Err(_) => {
-                    timeout = scheduler.tick();
-                }
-            }
-        }
-    });
+    if handle.is_err() {
+        panic!("{}", handle.err().unwrap());
+    }
 
-    //tx.send(SchedulerCommand::Stop);
+    let handle = handle.ok().unwrap();
 
     let collector = collector::SystemCollector::new();
     let rocket = rocket::build()
         .manage(Mutex::new(event))
         .manage(Mutex::new(collector))
-        .manage(system_snapshot_slot)
-        .manage(host_snapshot_slot)
-        .manage(tx)
-        .mount("/", routes![greet])
-        .mount("/", routes![event]);
+        //.manage(system_snapshot_slot)
+        //.manage(host_snapshot_slot)
+        .manage(Mutex::new(handle.tx))
+        .mount("/", routes![event, system_snapshot]);
 
     #[cfg(feature = "debug-tools")]
     let rocket = rocket.mount(
