@@ -1,7 +1,6 @@
 use core::fmt;
 use std::{
     collections::HashMap,
-    error::Error,
     sync::{
         Arc, Mutex,
         mpsc::{Receiver, Sender},
@@ -10,17 +9,9 @@ use std::{
 };
 
 use common::{HostSnapshot, SystemSnapshot};
-use rocket::tokio::sync::AcquireError;
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate};
 
-use crate::{
-    collector,
-    scheduler::{
-        SchedulerConfigurationError::MissingSchedule,
-        SchedulerStartError::{Configuration, ThreadSpawn},
-    },
-    system_snapshot,
-};
+use crate::{collector, scheduler::SchedulerConfigurationError::MissingSchedule};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MonitoringMode {
