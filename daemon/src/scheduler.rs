@@ -13,7 +13,14 @@ use common::{HostSnapshot, SystemSnapshot};
 use rocket::tokio::sync::AcquireError;
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate};
 
-use crate::{collector, system_snapshot};
+use crate::{
+    collector,
+    scheduler::{
+        SchedulerConfigurationError::MissingSchedule,
+        SchedulerStartError::{Configuration, ThreadSpawn},
+    },
+    system_snapshot,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MonitoringMode {
@@ -52,9 +59,17 @@ pub enum SchedulerStartError {
     Configuration(SchedulerConfigurationError),
     ThreadSpawn(std::io::Error),
 }
+impl std::error::Error for SchedulerStartError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Configuration(err) => Some(err),
+            Self::ThreadSpawn(err) => Some(err),
+        }
+    }
+}
 impl std::fmt::Display for SchedulerStartError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_string())
+        write!(f, "{self:?}")
     }
 }
 impl From<SchedulerConfigurationError> for SchedulerStartError {
@@ -146,17 +161,14 @@ impl Schedules {
             MonitoringMode::Interactive,
             MonitoringMode::Incident,
         ] {
-            if !self.behaviours.contains_key(&mode) {
-                return Err(SchedulerConfigurationError::MissingSchedule(mode));
-            }
-            if self.behaviours[&mode].host_update_interval <= std::time::Duration::from_secs(0) {
+            let schedule = self.behaviours.get(&mode).ok_or(MissingSchedule(mode))?;
+            if schedule.host_update_interval.is_zero() {
                 return Err(SchedulerConfigurationError::InvalidHostInterval(mode));
             }
-            if self.behaviours[&mode].users_update_interval <= std::time::Duration::from_secs(0) {
+            if schedule.users_update_interval.is_zero() {
                 return Err(SchedulerConfigurationError::InvalidUsersInterval(mode));
             }
-            if self.behaviours[&mode].processes_update_interval <= std::time::Duration::from_secs(0)
-            {
+            if schedule.processes_update_interval.is_zero() {
                 return Err(SchedulerConfigurationError::InvalidProcessesInterval(mode));
             }
         }

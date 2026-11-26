@@ -136,9 +136,11 @@ fn benchmark_users(
 }
 
 #[get("/debug/system_snapshot")]
-fn system_snapshot(tx: &rocket::State<Mutex<Sender<scheduler::SchedulerCommand>>>) -> String {
-    let inner_tx = tx.lock().unwrap();
-    let _ = inner_tx.send(scheduler::SchedulerCommand::UpdateSystemSnapshot);
+fn system_snapshot(tx: &rocket::State<Sender<scheduler::SchedulerCommand>>) -> String {
+    let result = tx.send(scheduler::SchedulerCommand::UpdateSystemSnapshot);
+    if result.is_err() {
+        return format!("Something went wrong! Error: {}", result.err().unwrap());
+    }
     "OK".into()
 }
 
@@ -174,7 +176,7 @@ fn rocket() -> _ {
         .manage(Mutex::new(collector))
         //.manage(system_snapshot_slot)
         //.manage(host_snapshot_slot)
-        .manage(Mutex::new(handle.tx))
+        .manage(handle.tx)
         .mount("/", routes![event, system_snapshot]);
 
     #[cfg(feature = "debug-tools")]
